@@ -1,38 +1,8 @@
-"""
-SPO agent for current SVO-RL codebase.
+"""Simple Policy Optimization (SPO) with a tail-weighted CVaR cost advantage.
 
-Background
-----------
-SPO (Simple Policy Optimization) is proposed by Xie et al. (ICML 2025).
-Compared to PPO, SPO replaces the heuristic ratio-clipping technique with a
-quadratic penalty on (ratio - 1), which is theoretically ε-aligned and
-empirically more effective at constraining ratio deviations during training.
-
-Reference repository:
-    https://github.com/MyRepositories-hub/Simple-Policy-Optimization
-The core SPO objective (mujoco/trainer.py L106-109) is:
-    policy_loss = -(advantages * ratios
-                    - |advantages| * (ratios - 1)^2 / (2*eps)).mean()
-
-Project-specific integration
-----------------------------
-1) **CVaR integration** via Lagrangian combined advantage
-       A_eff = A_R - lambda * cvar_cost_coef * A_C
-   The single SPO penalty is applied to A_eff, sharing one trust region for
-   the reward and cost paths instead of two inconsistent ratio-clippings.
-
-2) **SVO-guided adaptive ε (ablation only)**
-       ε_t = clip(ε_base * exp(-alpha * ρ_t), ε_min, ε_max)
-   where ρ_t is the per-step SVO interaction urgency from the rollout buffer
-   (already used by the CVaR module as svo_budget_term). High urgency →
-   smaller ε → tighter trust region in risky interactions.  This is not the
-   formal method because it changes the fixed-ε SPO analysis; the paper's
-   primary method uses official fixed-ε SPO.
-
-This implementation mirrors DAPOCarlaAgent: subclass PPOAgent and only
-override update(). All other interfaces (select_action, save/load, SVO/SLT
-hooks, rollout buffer) stay identical to PPOAgent so train.py/test.py do
-not need to special-case SPO beyond the agent dispatch.
+The reported method uses fixed epsilon. The adaptive-epsilon branch is used
+for ablation. The SPO objective follows the reference implementation:
+https://github.com/MyRepositories-hub/Simple-Policy-Optimization
 """
 
 from typing import Dict, Optional
@@ -45,15 +15,7 @@ from src.algorithms.ppo_model import PPOAgent
 
 
 class SPOCarlaAgent(PPOAgent):
-    """
-    SPO variant based on PPOAgent.
-
-    Why subclass PPOAgent:
-    - Keeps the project's PPO interfaces identical (select_action returns
-      7 items, buffer schema with SVO fields, save/load metadata, SLT hooks).
-    - Minimizes integration risk in train.py/test.py.
-    - Only the policy loss in update() differs from PPO.
-    """
+    """SPO policy update with a CVaR constraint."""
 
     def __init__(self, config):
         super().__init__(config)
@@ -74,9 +36,6 @@ class SPOCarlaAgent(PPOAgent):
             f"α={self.spo_alpha:.2f}"
         )
 
-    # ================================================================== #
-    #  Helper: per-sample ε for SPO                                       #
-    # ================================================================== #
 
     def _compute_spo_epsilon(self, data: dict, batch_idx: np.ndarray):
         """
@@ -102,22 +61,10 @@ class SPOCarlaAgent(PPOAgent):
         # fixed-ε fallback
         return float(self.spo_eps_base), 0.0, 0.0
 
-    # ================================================================== #
-    #  SPO update (mirrors PPOAgent.update structure, swaps actor loss)   #
-    # ================================================================== #
 
     def update(self, last_state: Optional[np.ndarray] = None,
                neighbor_ids=None) -> Dict[str, float]:
-        """
-        SPO policy update.
-
-        Structure mirrors PPOAgent.update. The only changes are:
-          (a) actor loss uses SPO quadratic penalty on Lagrangian-combined
-              advantage A_eff = A_R - λ·k_c·A_C  (instead of PPO clipping)
-          (b) per-sample ε from SVO posterior (when adaptive)
-          (c) cost_actor_loss is folded into A_eff and not added separately
-          (d) extra logging for ratio_deviation / ε / SVO risk
-        """
+        """Update the policy with the tail-weighted cost advantage."""
         ppo_cfg = self.config.ppo
 
         if self.buffer.ptr <= 0:
@@ -196,7 +143,7 @@ class SPOCarlaAgent(PPOAgent):
         total_entropy = 0.0
         total_approx_kl = 0.0
         n_updates = 0
-        # SPO 监测 (论文 Figure 6 / Table 1 的核心指标)
+        # SPO diagnostics.
         total_ratio_dev_mean = 0.0
         total_ratio_dev_max = 0.0
         total_eps_sum = 0.0
@@ -253,12 +200,7 @@ class SPOCarlaAgent(PPOAgent):
                 else:
                     A_eff = batch_advantages
 
-                # === SPO objective ===
-                # 公式 1:1 复刻自官方仓库 mujoco/trainer.py L106-109:
-                #     policy_loss = -(adv * ratios - |adv| * (ratios-1)^2 / (2*eps)).mean()
-                # 项目扩展两点 (论文 novelty):
-                #   (1) 用 A_eff (Lagrangian 合成) 替代 adv      → CVaR 集成
-                #   (2) 用 eps_t (per-sample tensor) 替代 标量    → SVO-adaptive trust region
+                # Apply the SPO quadratic penalty to the combined advantage.
                 spo_objective = (
                     ratio * A_eff
                     - A_eff.abs() * (ratio - 1.0).pow(2) / (2.0 * eps_t)
@@ -361,7 +303,7 @@ class SPOCarlaAgent(PPOAgent):
                         total_rho_sum += rho_mean
                         total_rho_max = max(total_rho_max, rho_max)
 
-            # Early stopping (与 PPO 一致, 防御性保留)
+            # Stop updates when the KL divergence exceeds the target.
             if ppo_cfg.target_kl is not None:
                 with torch.no_grad():
                     if self.use_svo_game:
@@ -392,7 +334,7 @@ class SPOCarlaAgent(PPOAgent):
             "entropy": total_entropy / max(n_updates, 1),
             "approx_kl": total_approx_kl / max(n_updates, 1),
             "lr": self.ppo_optimizer.param_groups[0]["lr"],
-            # SPO 论文 Figure 6 / Table 1 的核心验证指标
+
             "ratio_deviation_mean": total_ratio_dev_mean / max(n_updates, 1),
             "ratio_deviation_max": total_ratio_dev_max,
             "spo_epsilon_mean": total_eps_sum / max(n_updates, 1),

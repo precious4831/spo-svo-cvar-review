@@ -1,16 +1,7 @@
-"""Recurrent belief encoders used by the continuous SVO inference module.
+"""Recurrent belief encoders for social value orientation (SVO).
 
-The formal path uses :class:`RecurrentBetaBeliefNetwork`, abbreviated RBBN in
-the paper. It maintains:
-
-* a deterministic recurrent interaction state ``h_t``;
-* a bounded Beta belief over continuous SVO;
-* separate predictive-prior and observation-posterior parameter heads;
-* balanced KL regularisation and an explicit observation-assimilation update.
-
-Production inference always assimilates the latest interaction embedding.
-Its prior supports regularisation, diagnostics, missing-observation fallback,
-and ablation. The categorical variant is retained only as an ablation.
+The recurrent Beta network computes a predictive prior and updates it with the
+latest observation. The categorical encoder is used in the ablation study.
 """
 
 from dataclasses import dataclass

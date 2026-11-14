@@ -1,14 +1,7 @@
-"""Transformer + RBBN for continuous SVO inference.
+"""Continuous SVO inference from vehicle interaction histories.
 
-The module implements the SVO-specific L1/L2 stack requested by the project:
-
-``L1 temporal attention (per actor) -> L2 ego/target interaction attention
--> recurrent Beta belief network -> continuous SVO posterior``.
-
-Each physical neighbour is filtered independently and its recurrent state is
-keyed by CARLA actor id by the caller.  Consequently the network is invariant
-to the order in which neighbours enter a padded observation tensor, while the
-mask lets the same weights handle any number of active vehicles.
+Temporal attention encodes each actor's history. Relational attention combines
+the ego and neighboring vehicle features before the recurrent Beta belief update.
 """
 
 import math
@@ -292,12 +285,7 @@ class TrajectoryDecoder(nn.Module):
 
 
 class SVOObservedBetaModel(nn.Module):
-    """Evidence-aware continuous SVO posterior with observed filtering.
-
-    The historical class name is retained so existing training scripts and
-    checkpoints have one integration point.  The production stochastic state
-    is now a scalar Beta belief rather than a set of discrete angle anchors.
-    """
+    """Continuous SVO filtering and response trajectory prediction."""
 
     def __init__(self, config):
         super().__init__()
@@ -460,7 +448,6 @@ class SVOObservedBetaModel(nn.Module):
     def _weighted_mean(value, weight):
         return (value * weight).sum() / weight.sum().clamp_min(1.0)
 
-    # Sequence training and pretraining loss omitted from this release.
 
     def predict_sequence(self, npc_past, ego_past, valid_mask=None,
                          initial_state=None):
@@ -566,6 +553,5 @@ class SVOObservedBetaModel(nn.Module):
         return self._calibrate_theta(self._theta_from_unit(samples))
 
 
-# Backward-compatible import for older scripts and checkpoint tooling.  The
-        # The model is a recurrent Beta social-belief network.
+# Legacy class alias.
 SVOVariationalBIRL = SVOObservedBetaModel

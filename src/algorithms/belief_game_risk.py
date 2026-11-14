@@ -1,12 +1,6 @@
-"""Pure NumPy social-belief / Level-1 game-risk urgency.
+"""Interaction urgency from SVO posteriors, predicted responses, and vehicle observations.
 
-This module has no dependency on CARLA, PyTorch, or the training loop.  It
-consumes the already-produced SVO posterior, belief-conditioned response
-trajectories, and the flat observation used by the encoder.
-
-The project trajectory encoder stores yaw in radians (it rotates trajectories
-with ``sin(yaw)`` and ``cos(yaw)``).  An optional ``encoder_cfg.yaw_unit``
-override is accepted for isolated degree-valued fixtures.
+The observation layout uses yaw in radians by default.
 """
 
 from __future__ import annotations
@@ -20,7 +14,7 @@ RISK_CONDITIONING_MODES = ("fixed", "svo", "belief_game")
 
 
 def _section(config: Any, name: str) -> Any:
-    """Return a nested config section, or ``config`` for section-only tests."""
+    """Return a nested config section, or the section passed by the caller."""
 
     section = getattr(config, name, None)
     return config if section is None else section
@@ -72,7 +66,7 @@ def _encoder_layout(encoder_cfg: Any) -> Tuple[int, int, int, int, int, int]:
 
 
 def _expected_obs_dim(encoder_cfg: Any) -> int:
-    """Return the configured flat observation size without importing models."""
+    """Return the configured flat observation size from the encoder settings."""
 
     _, _, trajs_dim, map_dim, _, _ = _encoder_layout(encoder_cfg)
     aux_dim = int(getattr(encoder_cfg, "aux_state_dim"))
@@ -430,7 +424,7 @@ def compute_belief_game_urgency(
         diagnostics["critical_slot"] = svo_critical if svo_count else -1
         return float(svo_urgency) if np.isfinite(svo_urgency) else 0.0, diagnostics
 
-    # No active interaction means no risk, not a non-zero SVO fallback.
+    # Urgency is zero when the interaction mask is empty.
     mask = _coerce_mask(interact_mask, n)
     if mask is None:
         _set_fallback(diagnostics, "interact_mask_invalid")

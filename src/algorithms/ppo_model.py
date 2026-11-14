@@ -1,32 +1,4 @@
-"""
-ppo_model.py -- PPO Agent with Belief-Game Integration
-
-========================================================================
-在完整训练流程中的位置:
-  本文件定义PPOAgent, 被 train.py 和 test.py 调用.
-  训练: python train.py --stage l1 / svo_only / l2
-  验证: python test.py  --l1_model ... --svo_model ... --l2_model ...
-========================================================================
-
-架构:
-    shared_encoder → GameAwareCrossAttention → actor_head / critic_head
-    observed Beta-RSSM (SVO推断) + L1/L2 relational Transformer
-
-核心设计:
-  1. Actor/Critic 共享 Encoder (减半参数, 一致表征)
-  2. 单PPO优化器 + 合并损失 (解决共享Encoder梯度冲突)
-  3. SVO posterior、RSSM deterministic belief、response trajectory 与
-     Level-1 BV action data 缓存在 Buffer 中 (update 时不重复计算)
-  4. config.svo.enabled 控制开关 (False时退化为纯PPO)
-  5. 预训练 SVO 默认在强化学习阶段冻结; 在线推断模式由 config.svo 控制
-
-梯度冲突修复说明:
-  原版: Actor有Encoder_A, Critic有Encoder_B (各自独立)
-  新版: Actor和Critic共享一个Encoder
-  问题: actor_loss.backward() 释放计算图 → critic_loss.backward() 崩溃
-  解决: loss = actor_loss + value_coef*critic_loss - entropy_coef*entropy
-        单次 loss.backward() + 单次 optimizer.step()
-"""
+"""Policy and value heads, rollout storage, and episode-level CVaR calculations."""
 
 from __future__ import annotations
 
@@ -57,10 +29,6 @@ def _empirical_upper_tail(values: np.ndarray, alpha: float):
     return estimate, coeff, float(values[order[boundary]])
 
 
-# ======================================================================== #
-#  ActorHead: MLP-only (无内部Encoder)                                      #
-# ======================================================================== #
-# 
 class ActorHead(nn.Module):
     """
     Actor策略头.
@@ -152,10 +120,6 @@ class ActorHead(nn.Module):
         return log_prob, entropy
 
 
-# ======================================================================== #
-#  CriticHead: MLP-only                                                     #
-# ======================================================================== #
-
 class CriticHead(nn.Module):
     """
     Critic价值头.
@@ -182,10 +146,6 @@ class CriticHead(nn.Module):
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         return self.head(features).squeeze(-1)
 
-
-# ======================================================================== #
-#  RolloutBuffer (扩展版, 缓存 belief-game context)                         #
-# ======================================================================== #
 
 class RolloutBuffer:
     """
@@ -222,7 +182,7 @@ class RolloutBuffer:
         if use_svo_game and config is not None:
             N = config.encoder.num_neighbours
             H = config.svo.prediction_horizon
-            prior_mu = config.svo.prior_mu       # [Fix Bug2] 从config取, 不硬编码
+            prior_mu = config.svo.prior_mu
             prior_sigma = config.svo.prior_sigma
             self.svo_mu = np.full((buffer_size, N), prior_mu, dtype=np.float32)
             self.svo_sigma = np.full((buffer_size, N), prior_sigma, dtype=np.float32)
@@ -340,7 +300,7 @@ class RolloutBuffer:
             'log_probs':  torch.FloatTensor(self.log_probs[:n]).to(self.device),
             'returns':    torch.FloatTensor(returns).to(self.device),
             'advantages': torch.FloatTensor(advantages).to(self.device),
-            'values':     torch.FloatTensor(self.values[:n]).to(self.device),  # [Fix] value clipping用
+            'values':     torch.FloatTensor(self.values[:n]).to(self.device),  # Baseline for value clipping.
         }
         if self.use_svo:
             data['svo_mu']        = torch.FloatTensor(self.svo_mu[:n]).to(self.device)
@@ -364,29 +324,9 @@ class RolloutBuffer:
         self.full = False
 
 
-# ======================================================================== #
-#  PPOAgent                                                                 #
-# ======================================================================== #
-
 class PPOAgent:
-    """
-    PPO智能体 (Belief-Game集成版)
+    """Episode risk budgets and CVaR dual updates."""
 
-    架构:
-      shared_encoder (HierarchicalTransformerEncoder)
-          ↓
-      [Belief-Game Cross-Attention] ← posterior moments, deterministic belief,
-                                      response trajectory, Level-1-action relation
-          ↓
-      actor_head (ActorHead) → action
-      critic_head (CriticHead) → value
-
-    训练协议:
-      ppo_optimizer: encoder + actor_head + reward/cost critics
-      observed Beta-RSSM: 独立预训练，RL 阶段严格冻结
-    """
-
-    # Agent setup, policy rollout and training integration omitted from this release.
 
     @staticmethod
     def _episode_risk(pending: dict, ppo_cfg) -> dict:
@@ -406,21 +346,11 @@ class PPOAgent:
         }
 
     def _cvar_dual_update(self) -> Dict[str, float]:
-        """Update CVaR from complete episodes, including rollout boundaries.
+        """Update the tail-risk estimate and dual multiplier.
 
-        约束写法 (per-episode normalized):
-            CVaR_alpha( {C_e / d_e} ) <= 1
-            lambda <- max(0, lambda + lr * (CVaR_hat_norm - 1.0))
-
-        ``cvar_alpha`` is upper-tail mass; alpha=0.1 corresponds to the
-        common paper notation CVaR_0.9.  The episode budget is jointly
-        conditioned by SVO belief and Level-1 response evidence.  Tail
-        weights act on the safety-cost advantage, while formal SPO keeps a
-        fixed epsilon and SVO does not modify that epsilon.
-
-        A rollout often begins or ends in the middle of an episode.  Those
-        fragments are accumulated in ``_cvar_pending_episodes`` and enter the
-        empirical tail distribution only after a terminal transition arrives.
+        Incomplete episodes carry over across rollouts. ``cvar_alpha`` is the
+        upper-tail mass, so 0.1 selects the highest-cost 10% of episodes.
+        The constraint is CVaR(C_e / d_e) <= 1.
         """
         ppo_cfg = self.config.ppo
         n = self.buffer.ptr
@@ -507,8 +437,7 @@ class PPOAgent:
                     alpha * risk['budget']
                 )
 
-        # Do not repeatedly update lambda when a rollout contains no newly
-        # completed episode; the window can still be logged for diagnostics.
+        # Update the multiplier when an episode finishes.
         if completed_now > 0:
             violation = cvar_hat_norm - 1.0
             new_lambda = max(

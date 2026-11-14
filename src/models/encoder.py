@@ -1,37 +1,10 @@
-"""
-encoder.py — Hierarchical Transformer Encoder (PyTorch)
-
-========================================================================
-在完整训练流程中的位置:
-  本文件定义HierarchicalTransformerEncoder, 被 ppo_model.py 调用.
-  训练: python train.py --stage l1 / svo_only / l2
-  验证: python test.py  --l1_model ... --svo_model ... --l2_model ...
-========================================================================
-
-L1: 时间步 self-attention     (per agent)
-L2: Agent relational attention (ego ← neighbours)
-L3: Vehicle-Map cross-attention
-L4: Goal attention             (multi-mode)
-  L5: [Belief-Game] Belief-Game Cross-Attention (optional)
-
-修复记录:
-  - 原版: attention全mask时NaN → _safe_attention回退
-  - 原版: max-pool全mask → 零向量
-  - Belief-Game: GameAwareCrossAttention融合SVO后验、RSSM deterministic belief、
-    社会信念条件化的周车预测响应轨迹，以及包含Level-1实际动作的车辆关系特征
-  - Fix: num_modes>1时加断言保护 (GameAwareCrossAttention要求squeeze后的2D输入)
-  - Fix: 消除magic number, prior_sigma从config传入
-"""
+"""Hierarchical Transformer encoder for trajectories, maps, goals, and belief-conditioned interactions."""
 
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
-# ======================================================================== #
-#  工具函数                                                                  #
-# ======================================================================== #
 
 class Rotater(nn.Module):
     """坐标旋转（无可学习参数），全局→自车局部坐标"""
@@ -110,10 +83,6 @@ def _masked_max_pool(x, mask):
         return x.max(dim=1)[0]
 
 
-# ======================================================================== #
-#  MapEncoder                                                               #
-# ======================================================================== #
-
 class MapEncoder(nn.Module):
     """单条 polyline → self-attention → pool → embedding"""
 
@@ -134,10 +103,6 @@ class MapEncoder(nn.Module):
         vec = F.relu(self.vec_proj(inputs[:, 0, :]))
         return F.relu(self.out_proj(torch.cat([pooled, vec], dim=-1)))
 
-
-# ======================================================================== #
-#  [Belief-Game] L5: Belief-Game Cross-Attention                              #
-# ======================================================================== #
 
 class GameAwareCrossAttention(nn.Module):
     """
@@ -182,9 +147,7 @@ class GameAwareCrossAttention(nn.Module):
             nn.Linear(64, units),
         )
 
-        # Deterministic RSSM belief and the per-actor L1/L2 relation
-        # token are both retained; this prevents the policy from reducing the
-        # social belief to a single angle.
+        # Project recurrent belief and vehicle relations separately.
         self.deter_proj = nn.Sequential(
             nn.Linear(deter_dim, units), nn.ReLU(), nn.Linear(units, units)
         )
@@ -248,8 +211,7 @@ class GameAwareCrossAttention(nn.Module):
         ))
 
         # --- 5. 置信度门控 ---
-        # Keep a non-zero floor: high uncertainty is itself risk information
-        # and must not make an actor disappear from the Belief-Game layer.
+        # The confidence gate assigns each interacting vehicle a positive weight.
         gate = 0.35 + 0.65 * torch.sigmoid(
             self.GATE_BIAS - svo_sigma / self.GATE_TEMP
         ).unsqueeze(-1)                                    # (B, N, 1)
@@ -272,10 +234,6 @@ class GameAwareCrossAttention(nn.Module):
             )
         return output
 
-
-# ======================================================================== #
-#  HierarchicalTransformerEncoder                                           #
-# ======================================================================== #
 
 class HierarchicalTransformerEncoder(nn.Module):
     """
@@ -336,12 +294,9 @@ class HierarchicalTransformerEncoder(nn.Module):
             deter_dim=int(config.svo.rssm_hidden_dim),
         )
 
-        # ============================================================== #
-        # [Level-1 BV] actual action encoding branch                       #
-        # ============================================================== #
         # 输入: (B, N, 2) — 每个邻居的 [steer, throttle_minus_brake]
         # 输出: (B, N, units) — embedding 后融合到 neighbor 特征
-        # 用一个小 MLP, 不加复杂结构 (a_BV 只是 2 维数据, 简单投影即可)
+
         self.use_bv_actions = enc.use_bv_actions_in_obs
         if self.use_bv_actions:
             bv_act_dim = enc.bv_action_feat_dim - 1   # 去掉 valid_mask 那一维, 只投影 [steer, tb]
@@ -497,10 +452,6 @@ class HierarchicalTransformerEncoder(nn.Module):
 
         return feat
 
-
-# ======================================================================== #
-#  Observation Parser                                                       #
-# ======================================================================== #
 
 def parse_observation(flat_obs, config):
     """
