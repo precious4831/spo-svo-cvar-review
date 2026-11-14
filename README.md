@@ -2,6 +2,30 @@
 
 Source code accompanying the SPO–SVO–CVaR paper on interactive driving in CARLA. The repository follows the source layout used in the research project.
 
+## Demonstration Videos
+
+### Lane Change
+
+**Low SVO.** The ego vehicle yields to neighboring traffic during the lane-change maneuver. [Watch MP4](video/lane-change/low-svo.mp4).
+
+<img src="video/lane-change/low-svo.gif" alt="Lane Change, low SVO: ego vehicle yields" width="720">
+
+**High SVO.** The ego vehicle goes first during the lane-change maneuver. [Watch MP4](video/lane-change/high-svo.mp4).
+
+<img src="video/lane-change/high-svo.gif" alt="Lane Change, high SVO: ego vehicle goes first" width="720">
+
+### Ramp Merge
+
+**Low SVO.** The ego vehicle yields to neighboring traffic during the ramp merge. [Watch MP4](video/ramp/low-svo.mp4).
+
+<img src="video/ramp/low-svo.gif" alt="Ramp Merge, low SVO: ego vehicle yields" width="720">
+
+**High SVO.** The ego vehicle goes first during the ramp merge. [Watch MP4](video/ramp/high-svo.mp4).
+
+<img src="video/ramp/high-svo.gif" alt="Ramp Merge, high SVO: ego vehicle goes first" width="720">
+
+## Source Files
+
 | Source file | Contents |
 | --- | --- |
 | [`src/models/svo_belief.py`](src/models/svo_belief.py) | Recurrent Beta belief network and prior/posterior updates |
