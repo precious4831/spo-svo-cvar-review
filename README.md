@@ -1,34 +1,13 @@
-# SPO–SVO–CVaR: selected implementation excerpts for review
+# SPO–SVO–CVaR
 
-This repository contains selected mathematical implementation excerpts and a
-module-level reading guide for the CARLA driving research project. It is a
-partial code disclosure for methodological inspection. It does not provide
-end-to-end training, policy inference, or experimental reproduction.
+Selected implementation modules for inspecting the method in the paper. The modules use PyTorch and NumPy.
 
-## Reading guide
-
-| File | What can be inspected |
+| Module | Contents |
 | --- | --- |
-| `excerpts/beta_moments.py` | Bounded-belief distribution moments |
-| `excerpts/belief_features.py` | Posterior feature construction and confidence weighting |
-| `excerpts/tail_statistics.py` | Empirical upper-tail statistic with fractional boundary weighting |
-| `docs/method_overview.md` | Module relationships and tensor meanings |
-| `docs/source_map.md` | Relationship between released excerpts and original implementation |
-| `docs/disclosure_scope.md` | Exact scope of the release |
+| [`recurrent_beta_belief.py`](core/recurrent_beta_belief.py) | Recurrent state, predictive Beta prior, observation-conditioned posterior and balanced KL losses. |
+| [`belief_game_attention.py`](core/belief_game_attention.py) | Belief-game cross-attention, including confidence gating, response trajectories and interaction masking. |
+| [`belief_game_risk.py`](core/belief_game_risk.py) | Risk urgency from SVO beliefs, interaction geometry and predicted responses. |
+| [`episode_cvar.py`](core/episode_cvar.py) | Episode accumulation across rollout boundaries, adaptive budget, normalized tail cost, actor weights and dual update. |
+| [`spo_objective.py`](core/spo_objective.py) | SPO actor objective with the tail-weighted safety advantage. |
 
-The excerpts operate on supplied tensors or cost arrays. Their only external
-dependencies are NumPy and PyTorch, listed in `requirements.txt`.
-
-The upper-tail function uses **tail mass** alpha: alpha = 0.1 selects the
-worst 10% of samples. Its statistic describes the costs supplied by the caller;
-the release does not provide the experiment-specific episode-cost collector.
-
-No experiment results or performance claims are introduced by this repository.
-SPO is an existing optimization method, rather than an original contribution
-of these statistical excerpts.
-
-## 审稿展示范围
-
-提供信念分布统计、后验特征、置信度与尾部风险统计的局部实现，以及模块关系说明。
-完整网络、策略更新、训练入口、环境、配置、数据及权重未包含在本仓库中。
-代码来源及改写范围见 `docs/source_map.md`。
+The original short examples remain in [`excerpts/`](excerpts/). See the [method overview](docs/method_overview.md), [source map](docs/source_map.md) and [release scope](docs/disclosure_scope.md) for the inputs and module relationships.
