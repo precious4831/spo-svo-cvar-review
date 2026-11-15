@@ -8,21 +8,21 @@ SPO–SVO–CVaR studies how inferred social preferences inform driving decision
 
 **Low SVO.** The ego vehicle yields to a neighboring vehicle. [Watch MP4](video/lane-change/low-svo.mp4).
 
-<img src="video/lane-change/low-svo.gif" alt="Lane Change, low SVO: ego vehicle yields" width="720">
+<img src="video/lane-change/low-svo.gif?v=67dd439a941c" alt="Lane Change, low SVO: ego vehicle yields" width="720">
 
 **High SVO.** The ego vehicle changes lanes ahead of the neighboring vehicle. [Watch MP4](video/lane-change/high-svo.mp4).
 
-<img src="video/lane-change/high-svo.gif" alt="Lane Change, high SVO: ego vehicle goes first" width="720">
+<img src="video/lane-change/high-svo.gif?v=548aeca7fa9c" alt="Lane Change, high SVO: ego vehicle goes first" width="720">
 
 ### Ramp Merge
 
 **Low SVO.** The ego vehicle yields to a neighboring vehicle. [Watch MP4](video/ramp/low-svo.mp4).
 
-<img src="video/ramp/low-svo.gif" alt="Ramp Merge, low SVO: ego vehicle yields" width="720">
+<img src="video/ramp/low-svo.gif?v=b40355ec9a75" alt="Ramp Merge, low SVO: ego vehicle yields" width="720">
 
 **High SVO.** The ego vehicle merges ahead of the neighboring vehicle. [Watch MP4](video/ramp/high-svo.mp4).
 
-<img src="video/ramp/high-svo.gif" alt="Ramp Merge, high SVO: ego vehicle goes first" width="720">
+<img src="video/ramp/high-svo.gif?v=0293238fdcde" alt="Ramp Merge, high SVO: ego vehicle goes first" width="720">
 
 ## Source Files
 
